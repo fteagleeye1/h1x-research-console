@@ -1,0 +1,85 @@
+@import "tailwindcss";
+
+/*
+ * H1X design tokens — modern professional dark theme.
+ *
+ * Semantic layers (all mapped to Tailwind utilities via @theme inline):
+ *   canvas   page background
+ *   surface  card / panel background
+ *   raised   hover state or inset control background
+ *   line     hairline borders (two intensities)
+ *   ink      text tiers: primary > secondary > muted > faint
+ *   accent   emerald, used sparingly for interactive/emphasis
+ *
+ * Contrast targets WCAG AA: secondary (#c3c9d4) on surface ≈ 11:1,
+ * muted (#8b93a1) on surface ≈ 5.2:1. faint is decorative only.
+ */
+:root {
+  --canvas: #0a0c10;
+  --surface: #11141a;
+  --raised: #171b22;
+  --line: rgba(255, 255, 255, 0.08);
+  --line-strong: rgba(255, 255, 255, 0.14);
+  --ink-primary: #f2f5f9;
+  --ink-secondary: #c3c9d4;
+  --ink-muted: #8b93a1;
+  --ink-faint: #5d6570;
+  --accent: #34d399;
+  --accent-strong: #10b981;
+  --accent-dim: rgba(52, 211, 153, 0.12);
+}
+
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-raised: var(--raised);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-ink: var(--ink-primary);
+  --color-ink-secondary: var(--ink-secondary);
+  --color-ink-muted: var(--ink-muted);
+  --color-ink-faint: var(--ink-faint);
+  --color-accent: var(--accent);
+  --color-accent-strong: var(--accent-strong);
+  --color-accent-dim: var(--accent-dim);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--canvas);
+  color: var(--ink-primary);
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Consistent focus treatment across all interactive elements. */
+:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: rgba(52, 211, 153, 0.25);
+}
+
+/* Slim dark scrollbars (Chromium/WebKit + Firefox). */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #2a3038 transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: #2a3038;
+  border-radius: 8px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: #3a414b;
+}
