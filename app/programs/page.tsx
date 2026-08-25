@@ -454,8 +454,7 @@ export default function ProgramsPage() {
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
                         <Link
-                          href={`https://hackerone.com/${program.handle}`}
-                          target="_blank"
+                          href={`/programs/${program.handle}`}
                           className="truncate text-sm font-medium text-ink hover:text-accent"
                         >
                           {program.handle}
