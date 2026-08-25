@@ -18,8 +18,25 @@ disclosed reports with an AI assistant that explains them.
 - **Disclosed Library** — newest public disclosures grouped by vulnerability
   class, with severity filtering/sorting and search; low-information
   disclosures are filtered out automatically
+  - **Curated Tops** tab — all-time top reports per bug class from a public
+    curated corpus (reddelexc.github.io), stored locally
 - **Research Assistant** — optional AI chat grounded in the selected report
   (bring your own provider key)
+
+## Disclosed Library: offline sync (recommended)
+
+The library reads a local snapshot produced by the sync script. Browsing is
+instant and never touches HackerOne, so you can no longer get rate-limited
+while using it:
+
+```bash
+npm run sync-disclosed        # crawl + enrich + download TOP corpus (~1-2 min)
+```
+
+Run it whenever you want fresh data (e.g. daily). Options:
+`--enrich-limit N` (fewer full-body fetches), `--skip-tops`. Until the first
+sync completes, the app falls back to slow in-request crawling exactly like
+before.
 
 ## Requirements
 

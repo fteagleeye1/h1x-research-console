@@ -287,7 +287,10 @@ export default function DisclosedReportPage({
                 </section>
               )}
 
-              <ResearchAssistant key={report.id} reportId={report.id} />
+              <ResearchAssistant
+                key={report.id}
+                target={{ kind: "report", reportId: report.id }}
+              />
             </aside>
           </div>
         )}

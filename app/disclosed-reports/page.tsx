@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import AppShell from "@/components/app-shell";
+import CuratedTopsView from "@/components/curated-tops-view";
 import type { DisclosedListPayload } from "@/app/api/disclosed-reports/route";
 
 const SEVERITY_ORDER = ["critical", "high", "medium", "low", "none"] as const;
@@ -53,6 +54,7 @@ function extractReportId(input: string): string | null {
 export default function DisclosedReportsPage() {
   const router = useRouter();
 
+  const [tab, setTab] = useState<"latest" | "tops">("latest");
   const [classFilter, setClassFilter] = useState("all");
   const [severityFilter, setSeverityFilter] = useState("all");
   const [sort, setSort] = useState("newest-disclosed");
@@ -175,6 +177,28 @@ export default function DisclosedReportsPage() {
             research library
           </p>
           <h1 className="mt-1 text-xl font-semibold">Disclosed Reports</h1>
+
+          {/* View switcher */}
+          <div className="mt-2 flex rounded-lg border border-line bg-canvas/60 p-0.5">
+            {(
+              [
+                { key: "latest", label: "Latest disclosures" },
+                { key: "tops", label: "Curated Tops" },
+              ] as const
+            ).map((entry) => (
+              <button
+                key={entry.key}
+                onClick={() => setTab(entry.key)}
+                className={`rounded-md px-3 py-1 text-[11px] transition-colors ${
+                  tab === entry.key
+                    ? "bg-accent-dim text-accent"
+                    : "text-ink-muted hover:text-ink-secondary"
+                }`}
+              >
+                {entry.label}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* Report ID / URL jump */}
@@ -197,12 +221,15 @@ export default function DisclosedReportsPage() {
         </form>
       </header>
 
-      {idError && (
+      {idError && tab === "latest" && (
         <p className="border-b border-line bg-red-500/5 px-6 py-2 text-xs text-red-300 lg:px-10">
           {idError}
         </p>
       )}
 
+      {tab === "tops" ? (
+        <CuratedTopsView />
+      ) : (
       <div className="grid gap-6 p-6 lg:grid-cols-[240px_minmax(0,1fr)] lg:p-10">
         {/* Class sidebar */}
         <aside className="lg:sticky lg:top-6 lg:self-start">
@@ -455,6 +482,7 @@ export default function DisclosedReportsPage() {
           )}
         </main>
       </div>
+      )}
     </AppShell>
   );
 }

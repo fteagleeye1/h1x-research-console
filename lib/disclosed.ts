@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { HackerOneError, hackeroneFetch } from "@/lib/hackerone";
 import { classifyVulnerability } from "@/lib/vuln-classes";
 import { cached, peekCached } from "@/lib/cache";
@@ -5,23 +7,26 @@ import { cached, peekCached } from "@/lib/cache";
 /**
  * Disclosed-reports research library data layer.
  *
- * Two complementary HackerOne sources are combined per report:
+ * PRIMARY SOURCE — local snapshot produced offline by
+ * `npm run sync-disclosed` (scripts/sync-disclosed.mjs):
+ *
+ *   data/disclosed/snapshot.json = { syncedAt, feedItems, details }
+ *
+ * The script performs exactly the crawl described below ONCE, politely,
+ * outside the request path. Browsing then reads local JSON instantly and
+ * never touches HackerOne — no more 429 storms or slow cold starts.
+ *
+ * FALLBACK — when no snapshot exists yet, this layer crawls live exactly
+ * like the original implementation:
  *
  * 1. GET https://api.hackerone.com/v1/hackers/hacktivity (documented,
  *    authenticated, reused existing abstraction) with `sort=-disclosed_at`.
- *    Provides discovery metadata: id, title, weakness string ("cwe"),
- *    severity_rating, submitted_at, disclosed_at, total_awarded_amount,
- *    votes, program handle/name, canonical URL.
  *    NOTE: vulnerability_information is always empty/redacted here.
  *
- * 2. GET https://hackerone.com/reports/{id}.json — HackerOne's own public
- *    disclosure endpoint (the same JSON the public report page hydrates
- *    from). Read WITHOUT credentials, server-side only, for numeric report
- *    IDs discovered from the feed above or entered by the user. Provides
- *    the actual report body (vulnerability_information markdown),
- *    structured_scope, severity rating, timeline dates, reporter username.
- *    We never send H1 credentials to this endpoint and never fetch
- *    arbitrary user-supplied URLs — only https://hackerone.com/reports/<digits>.json.
+ * 2. GET https://hackerone.com/reports/{id}.json — public disclosure payload,
+ *    strictly rate-limited; enrichment runs paced and stops early under
+ *    sustained 429s. Read WITHOUT credentials, server-side only, numeric IDs
+ *    only — never arbitrary user-supplied URLs.
  */
 
 const SITE_JSON_BASE = "https://hackerone.com/reports";
@@ -44,6 +49,33 @@ const MAX_429_PER_BATCH = 12;
 const LIBRARY_TTL_MS = 6 * 60 * 60 * 1000;
 const DETAIL_TTL_MS = 48 * 60 * 60 * 1000;
 const NEGATIVE_DETAIL_TTL_MS = 30 * 60 * 1000;
+
+interface DisclosedSnapshot {
+  syncedAt: string;
+  metaLimit?: number;
+  enrichLimit?: number;
+  stoppedEarly?: boolean;
+  feedItems: HacktivityItem[];
+  details: Record<string, SiteReportJson | null>;
+}
+
+const SNAPSHOT_PATH = path.join(process.cwd(), "data", "disclosed", "snapshot.json");
+/** Re-stat the snapshot briefly; a fresh `npm run sync-disclosed` shows up fast. */
+const SNAPSHOT_TTL_MS = 30_000;
+
+async function loadSnapshot(): Promise<DisclosedSnapshot | null> {
+  return cached("disclosed-snapshot:v1", SNAPSHOT_TTL_MS, async () => {
+    try {
+      const parsed = JSON.parse(await readFile(SNAPSHOT_PATH, "utf8")) as DisclosedSnapshot;
+
+      if (!Array.isArray(parsed.feedItems)) return null;
+
+      return parsed;
+    } catch {
+      return null; // No snapshot yet — callers fall back to live crawling.
+    }
+  });
+}
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -291,11 +323,30 @@ function mergeReport(
 }
 
 /**
- * Newest-first disclosed library: feed metadata for LIBRARY_META_LIMIT
- * reports plus full-body enrichment for the LIBRARY_ENRICH_LIMIT newest.
- * Cached in-process; filters/search/pagination run over this snapshot.
+ * Newest-first disclosed library. Reads the offline snapshot when present
+ * (instant, zero network); otherwise falls back to the paced live crawl.
+ * Filters/search/pagination run over this snapshot in the API route.
  */
 export async function loadDisclosedLibrary(): Promise<DisclosedReport[]> {
+  const snapshot = await loadSnapshot();
+
+  if (snapshot) {
+    return cached("disclosed-library:v2", LIBRARY_TTL_MS, async () => {
+      const seen = new Set<string>();
+      const feedItems = snapshot.feedItems.filter((item) =>
+        seen.has(String(item.id)) ? false : (seen.add(String(item.id)), true)
+      );
+
+      return feedItems
+        .slice(0, LIBRARY_META_LIMIT)
+        .map((item) => mergeReport(item, snapshot.details[String(item.id)] ?? null));
+    });
+  }
+
+  console.warn(
+    "No disclosed-library snapshot found (run `npm run sync-disclosed`); crawling live with pacing."
+  );
+
   return cached("disclosed-library:v2", LIBRARY_TTL_MS, async () => {
     let feedItems: HacktivityItem[] = [];
 

@@ -6,13 +6,31 @@ type Message = {
   content: string;
 };
 
-const QUICK_ACTIONS = [
+/**
+ * Dual-mode Research Assistant:
+ *  - reportId   -> grounded in one disclosed report (full body)
+ *  - curatedFile -> grounded in a curated TOP category's index
+ */
+export type AssistantTarget =
+  | { kind: "report"; reportId: string }
+  | { kind: "curated"; curatedFile: string; curatedName: string };
+
+const REPORT_QUICK_ACTIONS = [
   "Explain this report",
   "What is the root cause?",
   "Explain the attack flow",
   "Why was this severity rating given?",
   "What security concepts does this demonstrate?",
   "How could it have been prevented?",
+];
+
+const CURATED_QUICK_ACTIONS = [
+  "What attack patterns recur across these reports?",
+  "Group these reports by technique",
+  "Which programs dominate and why might that be?",
+  "Which of these are most instructive to study first, and why?",
+  "What should I practice in a lab based on these titles?",
+  "Summarize what makes top reports stand out here",
 ];
 
 const NOT_CONFIGURED_HINT = [
@@ -30,17 +48,22 @@ const NOT_CONFIGURED_HINT = [
   "Restart the dev server after saving. Keys are never exposed to the browser.",
 ].join("\n");
 
-export default function ResearchAssistant({
-  reportId,
-}: {
-  reportId: string;
-}) {
+function targetBody(target: AssistantTarget) {
+  return target.kind === "report"
+    ? { reportId: target.reportId }
+    : { curatedFile: target.curatedFile };
+}
+
+export default function ResearchAssistant({ target }: { target: AssistantTarget }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notConfigured, setNotConfigured] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // NOTE: consumers pass `key={...}` per grounding target, so switching
+  // targets remounts this component and resets all chat state naturally.
 
   useEffect(() => {
     scrollRef.current?.scrollTo({
@@ -69,7 +92,10 @@ export default function ResearchAssistant({
       const response = await fetch("/api/assistant", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reportId, messages: nextMessages }),
+        body: JSON.stringify({
+          ...targetBody(target),
+          messages: nextMessages,
+        }),
       });
 
       const body = await response.json().catch(() => null);
@@ -100,6 +126,9 @@ export default function ResearchAssistant({
     }
   }
 
+  const quickActions =
+    target.kind === "curated" ? CURATED_QUICK_ACTIONS : REPORT_QUICK_ACTIONS;
+
   return (
     <section className="overflow-hidden rounded-xl border border-line bg-surface">
       <div className="flex items-center justify-between border-b border-line px-5 py-3">
@@ -108,7 +137,9 @@ export default function ResearchAssistant({
         </p>
 
         <p className="font-mono text-[10px] text-ink-faint">
-          grounded in this report only
+          {target.kind === "curated"
+            ? `grounded in "${target.curatedName}" index`
+            : "grounded in this report only"}
         </p>
       </div>
 
@@ -116,9 +147,19 @@ export default function ResearchAssistant({
       <div ref={scrollRef} className="max-h-[520px] min-h-[120px] overflow-y-auto px-5 py-4">
         {messages.length === 0 && !notConfigured && (
           <div className="text-sm leading-relaxed text-ink-muted">
-            Ask anything about this disclosure — the assistant sees the full
-            report and distinguishes report facts from general security
-            knowledge.
+            {target.kind === "curated" ? (
+              <>
+                Ask about patterns across this category — the assistant sees
+                every title, program and payout in the index. For full technical
+                depth on a single report, open it and use its own assistant.
+              </>
+            ) : (
+              <>
+                Ask anything about this disclosure — the assistant sees the full
+                report and distinguishes report facts from general security
+                knowledge.
+              </>
+            )}
           </div>
         )}
 
@@ -147,7 +188,7 @@ export default function ResearchAssistant({
 
         {busy && (
           <p className="animate-pulse font-mono text-xs text-accent/70">
-            analyzing report...
+            {target.kind === "curated" ? "analyzing category..." : "analyzing report..."}
           </p>
         )}
 
@@ -166,7 +207,7 @@ export default function ResearchAssistant({
 
       {/* Quick actions */}
       <div className="flex flex-wrap gap-1.5 border-t border-line/60 px-5 py-3">
-        {QUICK_ACTIONS.map((action) => (
+        {quickActions.map((action) => (
           <button
             key={action}
             disabled={busy || notConfigured}
@@ -191,7 +232,11 @@ export default function ResearchAssistant({
         <input
           value={input}
           onChange={(event) => setInput(event.target.value)}
-          placeholder="Ask about this report..."
+          placeholder={
+            target.kind === "curated"
+              ? "Ask about patterns in this category..."
+              : "Ask about this report..."
+          }
           disabled={busy || notConfigured}
           className="h-9 flex-1 rounded-lg border border-line bg-canvas/60 px-3 text-sm text-ink outline-none placeholder:text-ink-faint focus:border-accent/50 disabled:opacity-40"
         />
