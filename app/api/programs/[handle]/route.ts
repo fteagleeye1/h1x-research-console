@@ -39,6 +39,21 @@ export async function GET(_request: NextRequest, context: RouteContext) {
 
       const a = program.attributes ?? {};
 
+      // Structured scope arrives as a relationship collection (loosely
+      // typed upstream — HackerOneResource declares relationships unknown).
+      const scopes =
+        (
+          (
+            program as {
+              relationships?: {
+                structured_scopes?: {
+                  data?: { attributes?: Record<string, unknown> }[];
+                };
+              };
+            }
+          ).relationships?.structured_scopes?.data ?? []
+        ) ?? [];
+
       return {
         id: program.id ?? null,
         handle,
@@ -58,6 +73,21 @@ export async function GET(_request: NextRequest, context: RouteContext) {
         bountyEarnedForUser: a.bounty_earned_for_user ?? null,
         /** Policy/scope markdown rendered by the client. */
         policy: a.policy ?? null,
+        /** Parsed structured-scope table entries. */
+        structuredScopes: scopes.map((scope) => {
+          const sa = scope.attributes ?? {};
+
+          return {
+            assetIdentifier: (sa.asset_identifier as string) ?? null,
+            assetType: (sa.asset_type as string) ?? null,
+            eligibleForBounty:
+              (sa.eligible_for_bounty as boolean | null) ?? null,
+            eligibleForSubmission:
+              (sa.eligible_for_submission as boolean | null) ?? null,
+            maxSeverity: (sa.max_severity as string) ?? null,
+            instruction: (sa.instruction as string) ?? null,
+          };
+        }),
       };
     });
 

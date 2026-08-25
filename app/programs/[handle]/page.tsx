@@ -8,10 +8,20 @@ import Markdown from "@/components/markdown";
 import ResearchAssistant from "@/components/research-assistant";
 
 /**
- * In-app program profile: policy/scope + the user's own activity with this
- * program. Submission stays on hackerone.com — the documented Hacker API is
- * read-only, so "Report to this program" opens H1's authenticated form.
+ * In-app program profile with tabs: Scope (structured scope table + policy),
+ * Hacktivity (library disclosures for this program + your submissions) and
+ * Thanks. Submission stays on hackerone.com — the documented Hacker API is
+ * read-only, so "Report" opens the program on H1 where the form lives.
  */
+
+interface ScopeAsset {
+  assetIdentifier: string | null;
+  assetType: string | null;
+  eligibleForBounty: boolean | null;
+  eligibleForSubmission: boolean | null;
+  maxSeverity: string | null;
+  instruction: string | null;
+}
 
 interface ProgramProfile {
   id: string | null;
@@ -31,6 +41,7 @@ interface ProgramProfile {
   numberOfValidReportsForUser: number | null;
   bountyEarnedForUser: number | null;
   policy: string | null;
+  structuredScopes: ScopeAsset[];
 }
 
 interface MyReportItem {
@@ -50,6 +61,15 @@ interface MyReportItem {
     };
   };
 }
+
+interface DisclosedHit {
+  id: string;
+  title: string | null;
+  bountyAmount: number | null;
+  disclosedAt: string | null;
+}
+
+type Tab = "scope" | "hacktivity" | "thanks";
 
 function stateLabel(state: string | null): string | null {
   switch (state) {
@@ -75,16 +95,26 @@ function submissionLabel(state: string | null): string | null {
   }
 }
 
+const ASSET_TYPE_LABELS: Record<string, string> = {
+  URL: "URL",
+  WILDCARD: "Wildcard",
+  CIDR: "IP range (CIDR)",
+  IPV4: "IPv4",
+  IPV6: "IPv6",
+  OTHER: "Other",
+};
+
 export default function ProgramDetailPage() {
   const params = useParams<{ handle: string }>();
   const handle = params.handle;
 
+  const [tab, setTab] = useState<Tab>("scope");
   const [program, setProgram] = useState<ProgramProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const [myReports, setMyReports] = useState<MyReportItem[] | null>(null);
-  const [reportsError, setReportsError] = useState(false);
+  const [disclosed, setDisclosed] = useState<DisclosedHit[] | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -113,7 +143,7 @@ export default function ProgramDetailPage() {
       }
     })();
 
-    // Own activity: reuse the existing reports endpoint and filter locally.
+    // Own submissions (existing reports endpoint, filtered locally).
     (async () => {
       try {
         const response = await fetch("/api/reports?page=1&size=100");
@@ -123,7 +153,7 @@ export default function ProgramDetailPage() {
           setMyReports(payload.data as MyReportItem[]);
         }
       } catch {
-        if (!cancelled) setReportsError(true);
+        if (!cancelled) setMyReports([]);
       }
     })();
 
@@ -132,7 +162,32 @@ export default function ProgramDetailPage() {
     };
   }, [handle]);
 
-  const programReports = useMemo(() => {
+  // Disclosed reports for this program come from the local library snapshot.
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const response = await fetch(
+          `/api/disclosed-reports?program=${encodeURIComponent(handle)}&size=20`
+        );
+
+        if (!response.ok) throw new Error();
+
+        const payload = (await response.json()) as { items: DisclosedHit[] };
+
+        if (!cancelled) setDisclosed(payload.items ?? []);
+      } catch {
+        if (!cancelled) setDisclosed([]);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [handle]);
+
+  const myProgramReports = useMemo(() => {
     if (!myReports) return null;
 
     return myReports.filter(
@@ -140,7 +195,21 @@ export default function ProgramDetailPage() {
     );
   }, [myReports, handle]);
 
-  const reportFormUrl = `https://hackerone.com/${handle}/report_form`;
+  const inScopeAssets = useMemo(
+    () =>
+      (program?.structuredScopes ?? []).filter(
+        (scope) => scope.eligibleForSubmission !== false
+      ),
+    [program]
+  );
+
+  const oosAssets = useMemo(
+    () =>
+      (program?.structuredScopes ?? []).filter(
+        (scope) => scope.eligibleForSubmission === false
+      ),
+    [program]
+  );
 
   return (
     <AppShell>
@@ -166,7 +235,7 @@ export default function ProgramDetailPage() {
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <h1 className="truncate text-xl font-semibold">{program.name ?? handle}</h1>
-                <span className="font-mono text-xs text-ink-faint">@{program.handle}</span>
+                <span className="font-mono text-xs text-ink-faint">@{handle}</span>
               </div>
 
               <div className="mt-2 flex flex-wrap items-center gap-1.5">
@@ -194,138 +263,303 @@ export default function ProgramDetailPage() {
                   </span>
                 )}
 
-                {program.offersBounties && (
+                {program.offersBounties != null && (
                   <span className="rounded-full border border-line bg-raised/60 px-2 py-0.5 text-[10px] uppercase tracking-wide text-ink-muted">
-                    pays bounties
+                    {program.offersBounties ? "BBP · pays bounties" : "VDP"}
                   </span>
                 )}
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2">
-              <a
-                href={reportFormUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="rounded-lg border border-accent/35 bg-accent-dim px-4 py-2 text-sm font-medium text-accent transition-colors hover:bg-accent/20"
-              >
-                Report to this program ↗
-              </a>
-
-              <a
-                href={`https://hackerone.com/${program.handle}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="rounded-lg border border-line bg-raised/70 px-4 py-2 text-sm text-ink-secondary transition-colors hover:bg-line-strong"
-              >
-                View on HackerOne ↗
-              </a>
-            </div>
+            <a
+              href={`https://hackerone.com/${handle}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="rounded-lg border border-accent/35 bg-accent-dim px-4 py-2 text-sm font-medium text-accent transition-colors hover:bg-accent/20"
+            >
+              Report to this program ↗
+            </a>
           </div>
         ) : null}
       </header>
 
       {program && (
-        <div className="grid gap-6 p-6 lg:grid-cols-[minmax(0,1fr)_320px] lg:p-10">
-          {/* Policy / scope */}
-          <main className="min-w-0">
-            <section className="overflow-hidden rounded-xl border border-line bg-surface">
-              <p className="border-b border-line px-5 py-3 text-[10px] uppercase tracking-[0.18em] text-accent/90">
-                policy &amp; scope
-              </p>
+        <>
+          {/* Tabs */}
+          <div className="flex gap-1 border-b border-line px-6 pt-4 lg:px-10">
+            {(
+              [
+                { key: "scope", label: `Scope (${inScopeAssets.length})` },
+                { key: "hacktivity", label: "Hacktivity" },
+                { key: "thanks", label: "Thanks" },
+              ] as { key: Tab; label: string }[]
+            ).map((entry) => (
+              <button
+                key={entry.key}
+                onClick={() => setTab(entry.key)}
+                className={`-mb-px rounded-t-lg border-x border-t px-4 py-2 text-xs transition-colors ${
+                  tab === entry.key
+                    ? "border-line bg-surface font-medium text-ink"
+                    : "border-transparent text-ink-muted hover:text-ink-secondary"
+                }`}
+              >
+                {entry.label}
+              </button>
+            ))}
+          </div>
 
-              <div className="px-5 py-4">
-                {program.policy ? (
-                  <Markdown source={program.policy} />
-                ) : (
-                  <p className="text-sm text-ink-muted">
-                    This program has no visible policy text via the API. Check
-                    the HackerOne page for its full scope.
-                  </p>
-                )}
-              </div>
-            </section>
-          </main>
+          <div className="grid gap-6 p-6 pt-5 lg:grid-cols-[minmax(0,1fr)_320px] lg:p-10 lg:pt-6">
+            {/* Tab content */}
+            <main className="min-w-0">
+              {tab === "scope" && (
+                <>
+                  <section className="overflow-hidden rounded-xl border border-line bg-surface">
+                    <p className="border-b border-line px-5 py-3 text-[10px] uppercase tracking-[0.18em] text-accent/90">
+                      structured scope — in scope ({inScopeAssets.length})
+                    </p>
 
-          {/* Your activity */}
-          <aside className="lg:sticky lg:top-6 lg:self-start">
-            <section className="overflow-hidden rounded-xl border border-line bg-surface">
-              <p className="border-b border-line px-5 py-3 text-[10px] uppercase tracking-[0.18em] text-accent/90">
-                your activity here
-              </p>
+                    {inScopeAssets.length === 0 ? (
+                      <p className="px-5 py-4 text-sm text-ink-muted">
+                        No structured scope entries are exposed via the API.
+                        Check the policy below and the program page on
+                        HackerOne.
+                      </p>
+                    ) : (
+                      <ul className="divide-y divide-white/[0.06]">
+                        {inScopeAssets.map((scope, index) => (
+                          <li key={index} className="px-5 py-3.5">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="rounded-full border border-line bg-raised/60 px-2 py-0.5 font-mono text-[9px] uppercase tracking-wide text-ink-muted">
+                                {ASSET_TYPE_LABELS[scope.assetType ?? "OTHER"] ??
+                                  scope.assetType ??
+                                  "asset"}
+                              </span>
 
-              <dl className="divide-y divide-white/[0.06] text-sm">
-                {[
-                  ["Your reports", program.numberOfReportsForUser],
-                  [
-                    "Valid / resolved",
-                    program.numberOfValidReportsForUser,
-                  ],
-                  [
-                    "Bounties earned",
-                    program.bountyEarnedForUser != null
-                      ? `$${program.bountyEarnedForUser.toLocaleString("en-US")}`
-                      : null,
-                  ],
-                ].map(([label, value]) => (
-                  <div key={String(label)} className="flex items-center justify-between px-5 py-3">
-                    <dt className="text-ink-muted">{label}</dt>
-                    <dd className="font-mono text-ink">
-                      {value == null ? "—" : value}
-                    </dd>
-                  </div>
-                ))}
-              </dl>
-            </section>
+                              <span className="break-all font-mono text-xs text-ink">
+                                {scope.assetIdentifier ?? "—"}
+                              </span>
 
-            <section className="mt-4 overflow-hidden rounded-xl border border-line bg-surface">
-              <p className="border-b border-line px-5 py-3 text-[10px] uppercase tracking-[0.18em] text-accent/90">
-                recent submissions ({programReports ? programReports.length : "..."})
-              </p>
+                              {scope.eligibleForBounty && (
+                                <span className="rounded-full border border-emerald-500/25 bg-emerald-500/10 px-2 py-0.5 text-[9px] uppercase tracking-wide text-emerald-300">
+                                  bounty eligible
+                                </span>
+                              )}
 
-              {reportsError ? (
-                <p className="px-5 py-4 text-xs text-red-300">
-                  Could not load your reports.
-                </p>
-              ) : !programReports ? (
-                <p className="px-5 py-4 font-mono text-xs text-ink-faint">loading...</p>
-              ) : programReports.length === 0 ? (
-                <p className="px-5 py-4 text-xs text-ink-muted">
-                  No submissions to this program in your latest 100 reports.
-                </p>
-              ) : (
-                <ul className="divide-y divide-white/[0.06]">
-                  {programReports.slice(0, 10).map((report) => (
-                    <li key={report.id}>
-                      <Link
-                        href={`/reports/${report.id}`}
-                        className="block px-5 py-3 transition-colors hover:bg-raised/60"
-                      >
-                        <p className="line-clamp-2 text-xs leading-snug text-ink">
-                          {report.attributes?.title ?? `Report #${report.id}`}
+                              {scope.maxSeverity && scope.maxSeverity !== "none" && (
+                                <span className="font-mono text-[10px] capitalize text-ink-faint">
+                                  max: {scope.maxSeverity}
+                                </span>
+                              )}
+                            </div>
+
+                            {scope.instruction && (
+                              <p className="mt-1.5 line-clamp-3 text-[11px] leading-relaxed text-ink-muted">
+                                {scope.instruction}
+                              </p>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+
+                    {oosAssets.length > 0 && (
+                      <>
+                        <p className="border-y border-line bg-red-500/[0.04] px-5 py-2.5 text-[10px] uppercase tracking-[0.18em] text-red-300/80">
+                          out of scope / ineligible ({oosAssets.length})
                         </p>
 
-                        <p className="mt-1 font-mono text-[10px] capitalize text-ink-faint">
-                          #{report.id} · {report.attributes?.state ?? "unknown"}
+                        <ul className="divide-y divide-white/[0.06] opacity-70">
+                          {oosAssets.map((scope, index) => (
+                            <li key={index} className="px-5 py-2.5">
+                              <span className="mr-2 rounded-full border border-line bg-raised/60 px-2 py-0.5 font-mono text-[9px] uppercase tracking-wide text-ink-faint">
+                                {ASSET_TYPE_LABELS[scope.assetType ?? "OTHER"] ??
+                                  scope.assetType ??
+                                  "asset"}
+                              </span>
+                              <span className="break-all font-mono text-xs text-ink-muted">
+                                {scope.assetIdentifier ?? "—"}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      </>
+                    )}
+                  </section>
+
+                  <section className="mt-5 overflow-hidden rounded-xl border border-line bg-surface">
+                    <p className="border-b border-line px-5 py-3 text-[10px] uppercase tracking-[0.18em] text-accent/90">
+                      full policy
+                    </p>
+
+                    <div className="px-5 py-4">
+                      {program.policy ? (
+                        <Markdown source={program.policy} />
+                      ) : (
+                        <p className="text-sm text-ink-muted">
+                          This program has no visible policy text via the API.
                         </p>
-                      </Link>
-                    </li>
-                  ))}
-                </ul>
+                      )}
+                    </div>
+                  </section>
+                </>
               )}
-            </section>
-          </aside>
-        </div>
-      )}
 
-      {/* Program-grounded research assistant */}
-      {program && (
-        <div className="px-6 pb-8 lg:px-10">
-          <ResearchAssistant
-            key={handle}
-            target={{ kind: "program", programHandle: handle }}
-          />
-        </div>
+              {tab === "hacktivity" && (
+                <>
+                  {/* Disclosed reports from the library snapshot */}
+                  <section className="overflow-hidden rounded-xl border border-line bg-surface">
+                    <p className="border-b border-line px-5 py-3 text-[10px] uppercase tracking-[0.18em] text-accent/90">
+                      disclosed reports ({disclosed ? disclosed.length : "..."})
+                    </p>
+
+                    {!disclosed ? (
+                      <p className="px-5 py-4 font-mono text-xs text-ink-faint">loading...</p>
+                    ) : disclosed.length === 0 ? (
+                      <p className="px-5 py-4 text-xs leading-relaxed text-ink-muted">
+                        No disclosed reports for this program in your synced
+                        library snapshot (newest 100 global disclosures). Run{" "}
+                        <code className="rounded bg-canvas px-1.5 py-0.5 font-mono">
+                          npm run sync-disclosed
+                        </code>{" "}
+                        to refresh, or browse everything in Disclosed Reports.
+                      </p>
+                    ) : (
+                      <ul className="divide-y divide-white/[0.06]">
+                        {disclosed.map((hit) => (
+                          <li key={hit.id}>
+                            <Link
+                              href={`/disclosed-reports/${hit.id}`}
+                              className="block px-5 py-3 transition-colors hover:bg-raised/60"
+                            >
+                              <p className="line-clamp-2 text-xs leading-snug text-ink">
+                                {hit.title ?? `Report #${hit.id}`}
+                              </p>
+
+                              <p className="mt-1 flex flex-wrap items-center gap-x-3 font-mono text-[10px] text-ink-faint">
+                                <span>#{hit.id}</span>
+                                {hit.bountyAmount != null && hit.bountyAmount > 0 && (
+                                  <span className="text-accent/90">
+                                    ${hit.bountyAmount.toLocaleString("en-US")}
+                                  </span>
+                                )}
+                              </p>
+                            </Link>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </section>
+
+                  {/* Your own submissions */}
+                  <section className="mt-5 overflow-hidden rounded-xl border border-line bg-surface">
+                    <p className="border-b border-line px-5 py-3 text-[10px] uppercase tracking-[0.18em] text-accent/90">
+                      your submissions ({myProgramReports ? myProgramReports.length : "..."})
+                    </p>
+
+                    {!myProgramReports ? (
+                      <p className="px-5 py-4 font-mono text-xs text-ink-faint">loading...</p>
+                    ) : myProgramReports.length === 0 ? (
+                      <p className="px-5 py-4 text-xs text-ink-muted">
+                        No submissions to this program in your latest 100 reports.
+                      </p>
+                    ) : (
+                      <ul className="divide-y divide-white/[0.06]">
+                        {myProgramReports.map((report) => (
+                          <li key={report.id}>
+                            <Link
+                              href={`/reports/${report.id}`}
+                              className="block px-5 py-3 transition-colors hover:bg-raised/60"
+                            >
+                              <p className="line-clamp-2 text-xs leading-snug text-ink">
+                                {report.attributes?.title ?? `Report #${report.id}`}
+                              </p>
+
+                              <p className="mt-1 font-mono text-[10px] capitalize text-ink-faint">
+                                #{report.id} · {report.attributes?.state ?? "unknown"}
+                              </p>
+                            </Link>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </section>
+                </>
+              )}
+
+              {tab === "thanks" && (
+                <section className="overflow-hidden rounded-xl border border-line bg-surface">
+                  <p className="border-b border-line px-5 py-3 text-[10px] uppercase tracking-[0.18em] text-accent/90">
+                    thanks &amp; recognition
+                  </p>
+
+                  <div className="space-y-4 px-5 py-4 text-sm leading-relaxed text-ink-muted">
+                    <p>
+                      HackerOne does not expose per-program thanks/reputation
+                      data through the documented API, so this console cannot
+                      list who has been thanked here.
+                    </p>
+
+                    <p>
+                      What we do know about your footprint in this program is
+                      in the sidebar — reports submitted, valid/resolved count,
+                      and bounties earned.
+                    </p>
+
+                    <a
+                      href={`https://hackerone.com/${handle}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-block rounded-lg border border-line bg-raised/70 px-4 py-2 text-xs text-ink-secondary transition-colors hover:bg-line-strong hover:text-ink"
+                    >
+                      Open @{handle} on HackerOne ↗
+                    </a>
+                  </div>
+                </section>
+              )}
+            </main>
+
+            {/* Your activity */}
+            <aside className="lg:sticky lg:top-6 lg:self-start">
+              <section className="overflow-hidden rounded-xl border border-line bg-surface">
+                <p className="border-b border-line px-5 py-3 text-[10px] uppercase tracking-[0.18em] text-accent/90">
+                  your activity here
+                </p>
+
+                <dl className="divide-y divide-white/[0.06] text-sm">
+                  {[
+                    ["Your reports", program.numberOfReportsForUser],
+                    ["Valid / resolved", program.numberOfValidReportsForUser],
+                    [
+                      "Bounties earned",
+                      program.bountyEarnedForUser != null
+                        ? `$${program.bountyEarnedForUser.toLocaleString("en-US")}`
+                        : null,
+                    ],
+                  ].map(([label, value]) => (
+                    <div key={String(label)} className="flex items-center justify-between px-5 py-3">
+                      <dt className="text-ink-muted">{label}</dt>
+                      <dd className="font-mono text-ink">{value == null ? "—" : value}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </section>
+
+              <p className="mt-4 hidden max-w-[260px] text-[10px] leading-relaxed text-ink-faint lg:block">
+                Scope, hacktivity and stats are read-only views over the
+                documented HackerOne API. Always confirm against the live
+                policy before submitting.
+              </p>
+            </aside>
+          </div>
+
+          {/* Program-grounded research assistant */}
+          <div className="px-6 pb-8 lg:px-10">
+            <ResearchAssistant
+              key={handle}
+              target={{ kind: "program", programHandle: handle }}
+            />
+          </div>
+        </>
       )}
     </AppShell>
   );

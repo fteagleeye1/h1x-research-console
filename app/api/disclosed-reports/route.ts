@@ -84,6 +84,7 @@ export async function GET(request: NextRequest) {
     const severityFilter = (searchParams.get("severity") ?? "all").toLowerCase();
     const sort = searchParams.get("sort") ?? "newest-disclosed";
     const query = (searchParams.get("q") ?? "").trim().toLowerCase();
+    const programFilter = (searchParams.get("program") ?? "").trim().toLowerCase();
 
     const page = Math.max(1, Number.parseInt(searchParams.get("page") ?? "1", 10) || 1);
     const pageSize = Math.min(
@@ -94,6 +95,18 @@ export async function GET(request: NextRequest) {
     // Only useful reports are part of the browsable library.
     const library = await loadDisclosedLibrary();
     let reports = library.filter((report) => report.useful);
+
+    if (programFilter) {
+      reports = reports.filter((report) =>
+        [
+          report.programHandle ?? "",
+          report.programName ?? "",
+        ]
+          .join("\n")
+          .toLowerCase()
+          .includes(programFilter)
+      );
+    }
 
     if (classFilter !== "all") {
       reports = reports.filter((report) => report.vulnClass === classFilter);
