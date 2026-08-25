@@ -24,6 +24,7 @@ disclosed reports with an AI assistant that explains them.
   (bring your own provider key)
 
 ## Disclosed Library: offline sync (recommended)
+credit @reddelexc.github.io
 
 The library reads a local snapshot produced by the sync script. Browsing is
 instant and never touches HackerOne, so you can no longer get rate-limited
