@@ -7,13 +7,15 @@ type Message = {
 };
 
 /**
- * Dual-mode Research Assistant:
- *  - reportId   -> grounded in one disclosed report (full body)
- *  - curatedFile -> grounded in a curated TOP category's index
+ * Tri-mode Research Assistant:
+ *  - reportId     -> grounded in one disclosed report (full body)
+ *  - curatedFile  -> grounded in a curated TOP category's index
+ *  - programHandle-> grounded in a program's profile + policy/scope
  */
 export type AssistantTarget =
   | { kind: "report"; reportId: string }
-  | { kind: "curated"; curatedFile: string; curatedName: string };
+  | { kind: "curated"; curatedFile: string; curatedName: string }
+  | { kind: "program"; programHandle: string };
 
 const REPORT_QUICK_ACTIONS = [
   "Explain this report",
@@ -33,6 +35,14 @@ const CURATED_QUICK_ACTIONS = [
   "Summarize what makes top reports stand out here",
 ];
 
+const PROGRAM_QUICK_ACTIONS = [
+  "Summarize this program's scope from the policy",
+  "Is this program a good fit for a web/API-focused hunter?",
+  "What asset types does the policy cover?",
+  "What should I double-check in the policy before submitting?",
+  "How should I prioritize testing here?",
+];
+
 const NOT_CONFIGURED_HINT = [
   "The Research Assistant needs an AI provider key in .env.local (server-side only):",
   "",
@@ -49,9 +59,14 @@ const NOT_CONFIGURED_HINT = [
 ].join("\n");
 
 function targetBody(target: AssistantTarget) {
-  return target.kind === "report"
-    ? { reportId: target.reportId }
-    : { curatedFile: target.curatedFile };
+  switch (target.kind) {
+    case "report":
+      return { reportId: target.reportId };
+    case "curated":
+      return { curatedFile: target.curatedFile };
+    case "program":
+      return { programHandle: target.programHandle };
+  }
 }
 
 export default function ResearchAssistant({ target }: { target: AssistantTarget }) {
@@ -127,7 +142,11 @@ export default function ResearchAssistant({ target }: { target: AssistantTarget 
   }
 
   const quickActions =
-    target.kind === "curated" ? CURATED_QUICK_ACTIONS : REPORT_QUICK_ACTIONS;
+    target.kind === "curated"
+      ? CURATED_QUICK_ACTIONS
+      : target.kind === "program"
+        ? PROGRAM_QUICK_ACTIONS
+        : REPORT_QUICK_ACTIONS;
 
   return (
     <section className="overflow-hidden rounded-xl border border-line bg-surface">
@@ -139,7 +158,9 @@ export default function ResearchAssistant({ target }: { target: AssistantTarget 
         <p className="font-mono text-[10px] text-ink-faint">
           {target.kind === "curated"
             ? `grounded in "${target.curatedName}" index`
-            : "grounded in this report only"}
+            : target.kind === "program"
+              ? `grounded in @${target.programHandle}'s policy`
+              : "grounded in this report only"}
         </p>
       </div>
 
@@ -152,6 +173,12 @@ export default function ResearchAssistant({ target }: { target: AssistantTarget 
                 Ask about patterns across this category — the assistant sees
                 every title, program and payout in the index. For full technical
                 depth on a single report, open it and use its own assistant.
+              </>
+            ) : target.kind === "program" ? (
+              <>
+                Ask about this program&apos;s scope, fit and approach — the
+                assistant sees the program&apos;s policy as exposed by the API.
+                Always verify against the live policy before submitting.
               </>
             ) : (
               <>
@@ -188,7 +215,11 @@ export default function ResearchAssistant({ target }: { target: AssistantTarget 
 
         {busy && (
           <p className="animate-pulse font-mono text-xs text-accent/70">
-            {target.kind === "curated" ? "analyzing category..." : "analyzing report..."}
+            {target.kind === "curated"
+              ? "analyzing category..."
+              : target.kind === "program"
+                ? "analyzing program policy..."
+                : "analyzing report..."}
           </p>
         )}
 
@@ -235,7 +266,9 @@ export default function ResearchAssistant({ target }: { target: AssistantTarget 
           placeholder={
             target.kind === "curated"
               ? "Ask about patterns in this category..."
-              : "Ask about this report..."
+              : target.kind === "program"
+                ? `Ask about @${target.programHandle}...`
+                : "Ask about this report..."
           }
           disabled={busy || notConfigured}
           className="h-9 flex-1 rounded-lg border border-line bg-canvas/60 px-3 text-sm text-ink outline-none placeholder:text-ink-faint focus:border-accent/50 disabled:opacity-40"

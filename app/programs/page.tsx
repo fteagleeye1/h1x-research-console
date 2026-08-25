@@ -17,6 +17,8 @@ type EngagedProgram = {
 type Tab = "opportunities" | "engaged" | "all";
 type SortKey = "newest" | "reports" | "earnings" | "handle";
 type StatusFilter = "all" | "open" | "paused";
+/** BBP pays bounties; VDP thanks/points only (offers_bounties false/unknown). */
+type RewardFilter = "all" | "bbp" | "vdp";
 
 function formatUsd(value: number) {
   return value.toLocaleString("en-US", {
@@ -82,6 +84,7 @@ export default function ProgramsPage() {
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("newest");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [rewardFilter, setRewardFilter] = useState<RewardFilter>("all");
   const [bookmarkedOnly, setBookmarkedOnly] = useState(false);
 
   useEffect(() => {
@@ -142,12 +145,20 @@ export default function ProgramsPage() {
       );
     }
 
+    if (rewardFilter === "bbp") {
+      rows = rows.filter((program) => program.offersBounties === true);
+    } else if (rewardFilter === "vdp") {
+      // VDP = does NOT offer bounties. Unknown counts as VDP-side:
+      // the API only positively flags paying programs.
+      rows = rows.filter((program) => program.offersBounties !== true);
+    }
+
     if (bookmarkedOnly) {
       rows = rows.filter((program) => program.bookmarked);
     }
 
     return rows;
-  }, [tab, joined, engaged, statusFilter, bookmarkedOnly]);
+  }, [tab, joined, engaged, statusFilter, rewardFilter, bookmarkedOnly]);
 
   /** Then search + sort (search across handle/name). */
   const visible = useMemo(() => {
@@ -385,6 +396,50 @@ export default function ProgramsPage() {
                   {value}
                 </button>
               ))}
+            </div>
+
+            {/* Reward-type chips: BBP vs VDP */}
+            <div className="flex rounded-lg border border-line bg-surface p-0.5">
+              {(
+                [
+                  { value: "all", label: "All" },
+                  { value: "bbp", label: "BBP $" },
+                  { value: "vdp", label: "VDP" },
+                ] as { value: RewardFilter; label: string }[]
+              ).map(({ value, label }) => {
+                const count =
+                  value === "all"
+                    ? null
+                    : joined.filter((p) =>
+                        value === "bbp"
+                          ? p.offersBounties === true
+                          : p.offersBounties !== true
+                      ).length;
+
+                return (
+                  <button
+                    key={value}
+                    onClick={() => setRewardFilter(value)}
+                    title={
+                      value === "bbp"
+                        ? "Bug bounty programs — pay monetary bounties"
+                        : value === "vdp"
+                          ? "Vulnerability disclosure programs — no monetary bounties"
+                          : undefined
+                    }
+                    className={`rounded-md px-3 py-1.5 text-xs transition-colors ${
+                      rewardFilter === value
+                        ? "bg-line-strong text-ink"
+                        : "text-ink-muted hover:text-ink-secondary"
+                    }`}
+                  >
+                    {label}
+                    {count !== null && (
+                      <span className="ml-1 text-[9px] opacity-60">{count}</span>
+                    )}
+                  </button>
+                );
+              })}
             </div>
 
             <button

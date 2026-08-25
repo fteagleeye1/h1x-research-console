@@ -4,8 +4,11 @@ import {
   runAssistant,
   type AssistantMessage,
 } from "@/lib/ai";
+import { cached } from "@/lib/cache";
 import { loadDisclosedReport } from "@/lib/disclosed";
 import { loadCuratedCategory } from "@/lib/curated-tops";
+import { HackerOneError, hackeroneFetch } from "@/lib/hackerone";
+import type { Program, ProgramDetailResponse } from "@/lib/types";
 import { classLabel } from "@/lib/vuln-classes";
 
 const MAX_MESSAGES = 20;
@@ -14,14 +17,78 @@ const MAX_MESSAGE_CHARS = 4_000;
 const MAX_BODY_CHARS = 9_000;
 /** Corpus-mode context budget (index lines only; ~100 entries fits easily). */
 const MAX_CORPUS_ENTRIES = 150;
+/** Program policy budget — policies can be long markdown documents. */
+const MAX_POLICY_CHARS = 9_000;
 
 type ChatRequest = {
   /** Per-report mode: ground the chat in one disclosed report. */
   reportId?: string;
   /** Corpus mode: ground the chat in a curated TOP category's index. */
   curatedFile?: string;
+  /** Program mode: ground the chat in one of the user's programs. */
+  programHandle?: string;
   messages?: { role?: string; content?: string }[];
 };
+
+interface ProgramProfile {
+  handle: string;
+  name: string | null;
+  state: string | null;
+  submissionState: string | null;
+  offersBounties: boolean | null;
+  triageActive: boolean | null;
+  allowsBountySplitting: boolean | null;
+  openScope: boolean | null;
+  goldStandardSafeHarbor: boolean | null;
+  fastPayments: boolean | null;
+  startedAcceptingAt: string | null;
+  numberOfReportsForUser: number | null;
+  numberOfValidReportsForUser: number | null;
+  bountyEarnedForUser: number | null;
+  policy: string | null;
+}
+
+/** Shared fetch+cache for program profiles (same shape as the detail route). */
+async function loadProgramProfile(handle: string): Promise<ProgramProfile | null> {
+  return cached(`program-detail:v1:${handle}`, 30 * 60 * 1000, async () => {
+    try {
+      const response = await hackeroneFetch<ProgramDetailResponse>(
+        `/hackers/programs/${encodeURIComponent(handle)}`
+      );
+
+      const program =
+        "data" in response && response.data
+          ? response.data
+          : (response as Program);
+
+      if (!program || program.type !== "program") return null;
+
+      const a = program.attributes ?? {};
+
+      return {
+        handle,
+        name: a.name ?? null,
+        state: a.state ?? null,
+        submissionState: a.submission_state ?? null,
+        offersBounties: a.offers_bounties ?? null,
+        triageActive: a.triage_active ?? null,
+        allowsBountySplitting: a.allows_bounty_splitting ?? null,
+        openScope: a.open_scope ?? null,
+        goldStandardSafeHarbor: a.gold_standard_safe_harbor ?? null,
+        fastPayments: a.fast_payments ?? null,
+        startedAcceptingAt: a.started_accepting_at ?? null,
+        numberOfReportsForUser: a.number_of_reports_for_user ?? null,
+        numberOfValidReportsForUser: a.number_of_valid_reports_for_user ?? null,
+        bountyEarnedForUser: a.bounty_earned_for_user ?? null,
+        policy: a.policy ?? null,
+      };
+    } catch (error) {
+      if (error instanceof HackerOneError) return null;
+
+      throw error;
+    }
+  });
+}
 
 function buildSystemPrompt(report: {
   id: string;
@@ -138,6 +205,63 @@ function buildCorpusSystemPrompt(categoryName: string, entries: {
   ].join("\n");
 }
 
+/**
+ * Program-mode system prompt: grounded in the program's profile and its
+ * policy/scope markdown, plus the user's own engagement stats.
+ */
+function buildProgramSystemPrompt(program: ProgramProfile): string {
+  const facts = [
+    `Program handle: ${program.handle}`,
+    program.name ? `Name: ${program.name}` : null,
+    program.state === "public_mode"
+      ? "Visibility: public program"
+      : program.state === "soft_launched"
+        ? "Visibility: private (soft-launched) program"
+        : `Visibility: ${program.state ?? "unknown"}`,
+    `Submission state: ${program.submissionState ?? "unknown"}`,
+    `Offers monetary bounties: ${program.offersBounties == null ? "unknown" : program.offersBounties ? "yes (BBP)" : "no (VDP)"}`,
+    program.triageActive != null
+      ? `Triage active: ${program.triageActive ? "yes" : "no"}`
+      : null,
+    program.openScope != null ? `Open scope: ${program.openScope ? "yes" : "no"}` : null,
+    program.allowsBountySplitting != null
+      ? `Bounty splitting allowed: ${program.allowsBountySplitting ? "yes" : "no"}`
+      : null,
+    program.startedAcceptingAt ? `Accepting submissions since: ${program.startedAcceptingAt}` : null,
+    "",
+    "=== YOUR ENGAGEMENT WITH THIS PROGRAM ===",
+    `Reports submitted by the user: ${program.numberOfReportsForUser ?? 0}`,
+    `Valid/resolved reports: ${program.numberOfValidReportsForUser ?? 0}`,
+    `Bounties earned by the user: ${program.bountyEarnedForUser ?? 0}`,
+    "",
+    "=== PROGRAM POLICY & SCOPE (verbatim from HackerOne) ===",
+    (program.policy ?? "").slice(0, MAX_POLICY_CHARS) ||
+      "(no policy text available via API — say so when scope is asked about)",
+  ]
+    .filter((line) => line !== null)
+    .join("\n");
+
+  return [
+    "You are the H1X Research Assistant: a security mentor helping a bug bounty hunter decide how to approach a specific HackerOne program.",
+    "",
+    "GROUNDING RULES (critical):",
+    "1. Distinguish explicitly between (a) facts in the program profile/policy below and (b) general security knowledge used to explain or advise.",
+    '2. If something is not in the policy (exact reward amounts per asset, out-of-scope lists, special rules), say so, e.g. "The policy excerpt does not specify X."',
+    "3. NEVER invent scope assets, reward tiers, exclusions, response SLAs or rules that are not in the source material.",
+    "4. Quote or reference only the relevant policy parts; do not repeat the whole document.",
+    "",
+    "STYLE:",
+    "- Mentor tone: concrete, structured, concise. No filler.",
+    "- When asked about approach/fit: reason from the scope types in the policy (web/API/mobile/etc.), submission state, and bounty availability.",
+    "- Encourage reading the full policy on HackerOne before submitting anything.",
+    "- All advice must assume AUTHORIZED testing within this program's written rules only.",
+    "- Be concise; no filler.",
+    "",
+    "=== PROGRAM CONTEXT ===",
+    facts,
+  ].join("\n");
+}
+
 export async function POST(request: NextRequest) {
   let chat: ChatRequest;
 
@@ -172,9 +296,9 @@ export async function POST(request: NextRequest) {
   try {
     // --- Mode 2: curated corpus grounding -------------------------------
     if (chat.curatedFile) {
-      if (chat.reportId) {
+      if (chat.reportId || chat.programHandle) {
         return NextResponse.json(
-          { error: "Provide either reportId or curatedFile, not both." },
+          { error: "Provide only one of reportId, programHandle or curatedFile." },
           { status: 400 }
         );
       }
@@ -193,6 +317,39 @@ export async function POST(request: NextRequest) {
           category.name,
           category.reports.slice(0, MAX_CORPUS_ENTRIES)
         ),
+        messages
+      );
+
+      return NextResponse.json({ reply });
+    }
+
+    // --- Mode 3: program profile + policy grounding ----------------------
+    if (chat.programHandle) {
+      if (chat.reportId) {
+        return NextResponse.json(
+          { error: "Provide only one of reportId, programHandle or curatedFile." },
+          { status: 400 }
+        );
+      }
+
+      if (!/^[a-z0-9_-]{1,64}$/.test(chat.programHandle)) {
+        return NextResponse.json(
+          { error: "Invalid program handle." },
+          { status: 400 }
+        );
+      }
+
+      const program = await loadProgramProfile(chat.programHandle);
+
+      if (!program) {
+        return NextResponse.json(
+          { error: "Program not found or not accessible with your account." },
+          { status: 404 }
+        );
+      }
+
+      const reply = await runAssistant(
+        buildProgramSystemPrompt(program),
         messages
       );
 

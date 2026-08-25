@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import AppShell from "@/components/app-shell";
 import Markdown from "@/components/markdown";
+import ResearchAssistant from "@/components/research-assistant";
 
 /**
  * In-app program profile: policy/scope + the user's own activity with this
@@ -314,6 +315,16 @@ export default function ProgramDetailPage() {
               )}
             </section>
           </aside>
+        </div>
+      )}
+
+      {/* Program-grounded research assistant */}
+      {program && (
+        <div className="px-6 pb-8 lg:px-10">
+          <ResearchAssistant
+            key={handle}
+            target={{ kind: "program", programHandle: handle }}
+          />
         </div>
       )}
     </AppShell>
